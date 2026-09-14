@@ -8,26 +8,6 @@ The goal is simple:
 
 ---
 
-## Screenshots
-
-### Home
-
-![MediaHop Home](./ScreenShots/Home.png)
-
-### Server Browser
-
-![MediaHop Server Browser](./ScreenShots/Server.png)
-
-### M3U Browser
-
-![MediaHop M3U Browser](./ScreenShots/M3U.png)
-
-### Settings
-
-![MediaHop Settings](./ScreenShots/Settings.png)
-
----
-
 ## Current Features
 
 MediaHop currently supports:
@@ -113,6 +93,26 @@ MediaHop is still under development.
 Features may change, bugs are expected, and test builds may occasionally behave differently between devices.
 
 The purpose of these releases is to find those problems and improve the app.
+
+---
+
+## Screenshots
+
+### Home
+
+![MediaHop Home](./ScreenShots/Home.png)
+
+### Server Browser
+
+![MediaHop Server Browser](./ScreenShots/Server.png)
+
+### M3U Browser
+
+![MediaHop M3U Browser](./ScreenShots/M3U.png)
+
+### Settings
+
+![MediaHop Settings](./ScreenShots/Settings.png)
 
 ---
 

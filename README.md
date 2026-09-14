@@ -8,6 +8,26 @@ The goal is simple:
 
 ---
 
+## Screenshots
+
+### Home
+
+![MediaHop Home](screenshots/Home.png)
+
+### Server Browser
+
+![MediaHop Server Browser](screenshots/Server.png)
+
+### M3U Browser
+
+![MediaHop M3U Browser](screenshots/M3U.png)
+
+### Settings
+
+![MediaHop Settings](screenshots/Settings.png)
+
+---
+
 ## Current Features
 
 MediaHop currently supports:
@@ -72,7 +92,9 @@ Test APK releases will be available through the **Releases** section of this rep
 
 MediaHop is not currently distributed through the Google Play Store.
 
-Android may warn that the APK is being installed from an external source. Only install builds downloaded directly from this official MediaHop repository.
+Android may warn that the APK is being installed from an external source.
+
+Only install builds downloaded directly from this official MediaHop repository.
 
 ---
 

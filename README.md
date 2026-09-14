@@ -12,19 +12,19 @@ The goal is simple:
 
 ### Home
 
-![MediaHop Home](screenshots/Home.png)
+![MediaHop Home](Screenshots/Home.png)
 
 ### Server Browser
 
-![MediaHop Server Browser](screenshots/Server.png)
+![MediaHop Server Browser](Screenshots/Server.png)
 
 ### M3U Browser
 
-![MediaHop M3U Browser](screenshots/M3U.png)
+![MediaHop M3U Browser](Screenshots/M3U.png)
 
 ### Settings
 
-![MediaHop Settings](screenshots/Settings.png)
+![MediaHop Settings](Screenshots/Settings.png)
 
 ---
 

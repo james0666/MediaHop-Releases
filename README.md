@@ -1,10 +1,20 @@
 # MediaHop
 
-MediaHop is an Android media app designed to make it easy to play media from a server or M3U playlist on either your phone or a compatible TV.
+MediaHop is an Android media app designed to make it easy to play media from a remote server or M3U playlist on either your phone or a compatible TV.
 
 The goal is simple:
 
-**Pick something to play, choose where you want it to play, and switch between devices without starting over.**
+**Find something to play, choose where you want it to play, and switch between devices without starting over.**
+
+MediaHop is intentionally lightweight. It does not require Plex, Jellyfin, Emby, Docker, a database, or server-side transcoding.
+
+---
+
+## Current Test Release
+
+**MediaHop 0.1.15**
+
+MediaHop is currently available as a public test build through the **Releases** section of this repository.
 
 ---
 
@@ -12,112 +22,71 @@ The goal is simple:
 
 MediaHop currently supports:
 
-- Browse media from a configured server
-- Open and browse M3U playlists
-- Play media directly on Android
+- Browse media from a configured remote server
+- Folder and nested-folder navigation
+- Server-wide media search
+- Open and browse local M3U playlists
+- Play media directly on Android through Media3 / ExoPlayer
 - Stream media to compatible TVs using DLNA / UPnP
+- Discover compatible TVs on the local network
+- Automatically use a single discovered TV
+- Select between multiple discovered TVs
+- Phone / TV playback target selection
 - Switch playback from Phone → TV
 - Switch playback from TV → Phone
-- Resume normal media files from the current playback position
-- Playlist playback
+- Preserve playback position during normal-file Phone ↔ TV handoff
+- Persistent playlist playback
+- Tap any playlist item to start playback from that point
 - Previous / Next controls
 - Automatic playlist progression
-- Phone / TV playback target selection
-- TV availability detection
+- Recently Watched history for completed server media
+- Tap Recently Watched items to replay them
+- Main-screen TV playback controls
+- TV playback position and duration display
+- TV seek slider
+- Play / Pause / Stop controls
 - Fullscreen Android playback
 - Seek and scrub controls
 - 15-second skip controls
 - Screen rotation support
 - Multiple aspect-ratio options
 - Background TV streaming
+- Background TV availability detection
+- Optional protected server authentication
+- HTTP Basic Authentication support
 - Stop all active playback
 
 ---
 
-## Testing
+## Multiple TVs
 
-MediaHop is currently in active development and testing.
+MediaHop supports homes with more than one compatible DLNA / UPnP TV.
 
-If you install a test build, I am mainly looking for feedback on:
+If one compatible TV is discovered, MediaHop can use it automatically.
 
-- Playback problems
-- TV discovery problems
-- Phone ↔ TV switching
-- M3U playlist behaviour
-- Server browsing
-- Crashes or freezes
-- Audio or video problems
-- UI problems
-- Device compatibility
-- Anything that behaves differently from what you expected
+If multiple TVs are discovered, they can be selected from the **Active Device** area.
 
-If something breaks, please include as much useful information as possible, such as:
-
-- Phone model
-- Android version
-- TV model if relevant
-- What you were trying to play
-- Whether playback was on the phone or TV
-- What happened
-- What you expected to happen
-- Whether the problem happens every time
-
-Screenshots are also helpful when relevant.
+This lets different people choose the TV they actually want instead of MediaHop simply using whichever device responds first.
 
 ---
 
-## Test Builds
+## Recently Watched
 
-Test APK releases will be available through the **Releases** section of this repository.
+MediaHop keeps a small rolling history of completed server media.
 
-MediaHop is not currently distributed through the Google Play Store.
-
-Android may warn that the APK is being installed from an external source.
-
-Only install builds downloaded directly from this official MediaHop repository.
-
----
-
-## Feedback & Bug Reports
-
-Please use the **Issues** section of this repository to report bugs, compatibility problems, or other feedback.
-
-Before opening a new issue, check whether the same problem has already been reported.
+- Stores up to 14 completed items
+- Only adds media after natural playback completion
+- Stopping or backing out early does not add an item
+- Recently Watched items can be tapped to play them again
+- Older entries automatically roll off the list
 
 ---
 
-## Current Status
+## Server Setup
 
-MediaHop is still under development.
+The Server browser uses the included MediaHop `media.php` helper.
 
-Features may change, bugs are expected, and test builds may occasionally behave differently between devices.
+Setup instructions and the current PHP file are available in the:
 
-The purpose of these releases is to find those problems and improve the app.
-
----
-
-## Screenshots
-
-### Home
-
-![MediaHop Home](./ScreenShots/Home.png)
-
-### Server Browser
-
-![MediaHop Server Browser](./ScreenShots/Server.png)
-
-### M3U Browser
-
-![MediaHop M3U Browser](./ScreenShots/M3U.png)
-
-### Settings
-
-![MediaHop Settings](./ScreenShots/Settings.png)
-
----
-
-## Source Code
-
-This repository is for MediaHop test releases, documentation, and feedback.
-
-The MediaHop development source code and Unity project are maintained privately and are not included in this repository.
+```text
+MediaHop_Server/

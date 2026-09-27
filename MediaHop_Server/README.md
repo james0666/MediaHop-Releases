@@ -9,7 +9,7 @@ It lets MediaHop:
 - Stream media through the phone to a DLNA / UPnP TV.
 - Handle HTTP `GET`, `HEAD`, and byte-range requests used during playback and seeking.
 - Optionally protect the MediaHop endpoint with a username/password login.
-- Optionally return basic media information for the selected TV file when `ffprobe` is available.
+- Optionally return media information for the selected TV file when `ffprobe` is available.
 - Hide unwanted folders from the MediaHop library without moving or deleting them.
 
 The setup is intentionally small. No Plex, Jellyfin, Emby, Docker container, database, or server-side transcoding is required.
@@ -27,7 +27,7 @@ You need:
 
 Optional:
 
-- `ffprobe` if you want MediaHop to request codec/resolution metadata for a file before sending it to a TV.
+- `ffprobe` if you want MediaHop to request codec, resolution, and duration metadata for a file before sending it to a TV.
 - HTTP Basic Authentication configured by your web host if you want another protection layer in front of `media.php`.
 
 `ffprobe` is not required for normal browsing or playback.
@@ -161,14 +161,44 @@ When MediaHop login is enabled:
 - Protected media URLs include the validated token when required.
 - Changing the configured username, password, or token secret invalidates old tokens.
 - Tokens expire automatically.
+- Repeated failed login attempts can temporarily lock further login attempts.
 
-The default token lifetime is 30 days:
+The default token lifetime is 14 days:
 
 ```php
-$authTokenLifetimeSeconds = 30 * 24 * 60 * 60;
+$authTokenLifetimeSeconds = 14 * 24 * 60 * 60;
 ```
 
 You can change that if required.
+
+---
+
+# Login Rate Limiting
+
+The supplied `media.php` includes lightweight rate limiting for MediaHop's own login endpoint.
+
+Default settings:
+
+```php
+$authRateLimitEnabled = true;
+$authRateLimitMaxFailures = 5;
+$authRateLimitWindowSeconds = 10 * 60;
+$authRateLimitLockoutSeconds = 15 * 60;
+```
+
+With the default settings:
+
+- Five failed login attempts within 10 minutes can trigger a lockout.
+- The lockout lasts for 15 minutes.
+- Correct credentials are also rejected while the lockout is active.
+- A successful login clears the stored failed-login state.
+- The response includes a `Retry-After` value when rate limited.
+
+Rate limiting applies only to MediaHop's own `?action=login` endpoint.
+
+Attempts are tracked using the connecting address reported by the web server.
+
+The supplied implementation does not trust `X-Forwarded-For` by default.
 
 ---
 
@@ -225,7 +255,9 @@ $excludedFolders = [
 ];
 ```
 
-The exclusion applies to the media list and direct MediaHop access through this endpoint.
+The `api` helper folder is also hidden from the returned media list.
+
+Folder exclusions are intended for library organisation.
 
 Do not use folder exclusions as your only security measure for sensitive files. Keep private documents, passwords, backups, keys, and unrelated data outside the media root.
 
@@ -358,7 +390,10 @@ When available, the endpoint can return:
 - Width.
 - Height.
 - File size.
+- Duration.
 - Whether `ffprobe` was available.
+
+Duration metadata can be used by MediaHop when working with compatible TV time-seek behaviour.
 
 The server does not scan the entire library with `ffprobe`.
 
@@ -370,6 +405,16 @@ HLS `.m3u8` files are not probed.
 
 ---
 
+# Stream Diagnostics
+
+Server-side stream diagnostic logging is disabled in the supplied public helper.
+
+The PHP file keeps the diagnostic hook in place internally, but it does not create a MediaHop stream-debug log or write those stream messages to PHP's normal error log.
+
+Playback troubleshooting is primarily handled through the MediaHop Android diagnostic log.
+
+---
+
 # Security
 
 The script includes path checks designed to stop requests from escaping outside the configured media root.
@@ -377,6 +422,7 @@ The script includes path checks designed to stop requests from escaping outside 
 For additional protection you can use:
 
 - MediaHop's optional username/password login.
+- Login rate limiting.
 - HTTP Basic Authentication provided by your web server.
 - HTTPS.
 
@@ -456,6 +502,23 @@ Sign in again through MediaHop.
 
 ---
 
+## `Too many failed login attempts`
+
+The login rate limiter has temporarily blocked new login attempts.
+
+With the default settings:
+
+```text
+5 failed attempts within 10 minutes
+-> 15 minute lockout
+```
+
+Wait for the lockout to expire and try again.
+
+Correct credentials will not bypass an active lockout.
+
+---
+
 ## HTTP Basic login keeps appearing
 
 HTTP Basic Authentication is controlled by your web server, not by the MediaHop token settings in `media.php`.
@@ -473,6 +536,7 @@ Possible causes include:
 - The TV does not support that container.
 - The TV does not support the video codec.
 - The TV does not support the audio codec.
+- The Android device does not support the media format.
 - The server or reverse proxy blocks or alters range requests.
 - The TV has manufacturer-specific DLNA behaviour.
 
@@ -488,6 +552,7 @@ Check that:
 - The file itself supports practical seeking.
 - The TV supports seeking for that media type.
 - A reverse proxy is not stripping Range headers.
+- `ffprobe` metadata is available if the TV path requires duration information for time-based seeking.
 
 ---
 
@@ -580,6 +645,7 @@ Use this when you want one or more of the following:
 
 - A custom media-directory path.
 - MediaHop username/password authentication.
+- Login rate limiting.
 - HTTP Basic Authentication.
 - Custom folder exclusions.
 - Optional `ffprobe` metadata.
@@ -608,7 +674,8 @@ The PHP helper:
 - Streams media.
 - Handles byte ranges.
 - Optionally protects the MediaHop endpoint.
-- Optionally returns selected-file metadata.
+- Applies login rate limiting.
+- Optionally returns selected-file metadata including duration.
 - Applies configured library exclusions.
 
 TV discovery and DLNA / UPnP control are handled by the MediaHop Android app.

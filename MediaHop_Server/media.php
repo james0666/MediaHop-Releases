@@ -46,14 +46,15 @@ $allowedExtensions = [
 // OPTIONAL LIBRARY EXCLUSIONS
 // =================================================
 //
-// Folder names listed here are hidden from MediaHop's media list.
-// This does not delete or move anything.
+// The api/ folder is always hidden by MediaHop.
+//
+// Folder names listed below are also hidden from MediaHop's media list
+// and cannot be streamed through this endpoint. This does not delete or
+// move anything. Matching is case-insensitive and applies anywhere in
+// the media tree.
 //
 // "Sample" is excluded by default because release folders commonly
-// contain short sample video files.
-//
-// Add any other folder names you do not want MediaHop to list.
-// Matching is case-insensitive and applies anywhere in the media tree.
+// contain short sample video files. Add your own folder names as needed.
 
 $excludedFolders = [
     'Sample'
@@ -65,17 +66,15 @@ $excludedFolders = [
 // =================================================
 //
 // Leave false for a normal unprotected MediaHop server.
-//
 // Set true to require the MediaHop username/password login.
 //
 // IMPORTANT:
 // Change the username, password, and token secret BEFORE enabling auth.
 // The token secret should be a long random value.
 //
-// HTTP Basic Authentication is separate from this setting.
-// If your web host already protects this URL with HTTP Basic Auth,
-// configure that on the web server itself. MediaHop can handle both
-// HTTP Basic Auth and this MediaHop login at the same time.
+// HTTP Basic Authentication is separate from this setting. If your web
+// host already protects this URL with HTTP Basic Auth, configure that on
+// the web server itself. MediaHop can handle both at the same time.
 
 $authEnabled = false;
 
@@ -83,8 +82,17 @@ $authUsername = 'CHANGE_ME';
 $authPassword = 'CHANGE_ME';
 $authTokenSecret = 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET';
 
-// 30 days.
-$authTokenLifetimeSeconds = 30 * 24 * 60 * 60;
+// 14 days.
+$authTokenLifetimeSeconds = 14 * 24 * 60 * 60;
+
+
+// Lightweight login rate limiting.
+// This applies only to MediaHop's own ?action=login endpoint.
+// Attempts are tracked per REMOTE_ADDR using small temporary files.
+$authRateLimitEnabled = true;
+$authRateLimitMaxFailures = 5;
+$authRateLimitWindowSeconds = 10 * 60;
+$authRateLimitLockoutSeconds = 15 * 60;
 
 
 // =================================================
@@ -97,6 +105,54 @@ function normalizeRelativePath($path)
         str_replace('\\', '/', $path),
         '/'
     );
+}
+
+
+function isHiddenMediaPath(
+    $relativePath,
+    $excludedFolders)
+{
+    $normalized = normalizeRelativePath($relativePath);
+
+    // Never expose the API helper folder.
+    if (preg_match('~(^|/)api(/|$)~i', $normalized))
+    {
+        return true;
+    }
+
+    if (!is_array($excludedFolders) ||
+        count($excludedFolders) === 0)
+    {
+        return false;
+    }
+
+    $parts =
+        preg_split(
+            '~[/\\\\]+~',
+            $normalized,
+            -1,
+            PREG_SPLIT_NO_EMPTY
+        );
+
+    if (!is_array($parts))
+    {
+        return false;
+    }
+
+    foreach ($parts as $part)
+    {
+        foreach ($excludedFolders as $excluded)
+        {
+            if (strcasecmp(
+                    (string)$part,
+                    (string)$excluded) === 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 
@@ -171,56 +227,16 @@ function getMimeTypeForPath($path)
 }
 
 
-function isExcludedMediaPath(
-    $relativePath,
-    $excludedFolders)
-{
-    if (!is_array($excludedFolders) ||
-        count($excludedFolders) === 0)
-    {
-        return false;
-    }
-
-    $parts =
-        preg_split(
-            '~[/\\\\]+~',
-            $relativePath,
-            -1,
-            PREG_SPLIT_NO_EMPTY
-        );
-
-    if (!is_array($parts))
-    {
-        return false;
-    }
-
-    foreach ($parts as $part)
-    {
-        foreach ($excludedFolders as $excluded)
-        {
-            if (strcasecmp(
-                    (string)$part,
-                    (string)$excluded) === 0)
-            {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 
 // =================================================
 // TV MEDIA METADATA
 // =================================================
+// Used only when a server file is about to be sent to a DLNA TV.
+// This deliberately probes one selected file at a time instead of
+// scanning the whole library.
 //
-// Used only when a selected server file is about to be sent to a DLNA TV.
-// MediaHop does NOT probe the entire library.
-//
-// ffprobe is optional. If it is unavailable, normal playback still works
-// and file size is returned when possible.
-
+// ffprobe is optional. If the host does not provide it, file size is
+// still returned and normal playback remains completely unaffected.
 function getTvMediaMetadata($path)
 {
     $metadata = [
@@ -229,6 +245,7 @@ function getTvMediaMetadata($path)
         'width' => 0,
         'height' => 0,
         'size' => 0,
+        'durationMs' => 0,
         'probeAvailable' => false
     ];
 
@@ -236,10 +253,11 @@ function getTvMediaMetadata($path)
 
     if ($size !== false)
     {
-        $metadata['size'] =
-            (int)$size;
+        $metadata['size'] = (int)$size;
     }
 
+    // Do not probe HLS playlists. Their referenced media may be remote
+    // or continuously changing, and the TV path does not need this.
     $extension =
         strtolower(
             pathinfo(
@@ -248,7 +266,6 @@ function getTvMediaMetadata($path)
             )
         );
 
-    // Do not probe HLS playlists.
     if ($extension === 'm3u8')
     {
         return $metadata;
@@ -261,7 +278,7 @@ function getTvMediaMetadata($path)
 
     $command =
         'ffprobe -v error ' .
-        '-show_entries stream=codec_type,codec_name,width,height ' .
+        '-show_entries format=duration:stream=codec_type,codec_name,width,height ' .
         '-of json ' .
         escapeshellarg($path) .
         ' 2>/dev/null';
@@ -287,6 +304,23 @@ function getTvMediaMetadata($path)
     }
 
     $metadata['probeAvailable'] = true;
+
+    if (isset($probe['format']) &&
+        is_array($probe['format']) &&
+        isset($probe['format']['duration']) &&
+        is_numeric($probe['format']['duration']))
+    {
+        $durationSeconds =
+            (float)$probe['format']['duration'];
+
+        if ($durationSeconds > 0)
+        {
+            $metadata['durationMs'] =
+                (int)round(
+                    $durationSeconds * 1000
+                );
+        }
+    }
 
     if (!isset($probe['streams']) ||
         !is_array($probe['streams']))
@@ -352,7 +386,20 @@ function getTvMediaMetadata($path)
 
 
 // =================================================
-// JSON / AUTH HELPERS
+// MEDIAHOP STREAM DIAGNOSTICS - DISABLED
+// =================================================
+//
+// Keep this no-op helper so the existing streaming code does not need to
+// change, but do not create mediahop_stream_debug.log and do not write these
+// diagnostic messages to PHP's normal error log.
+function mediaHopStreamLog($message)
+{
+    return;
+}
+
+
+// =================================================
+// MEDIAHOP AUTH HELPERS
 // =================================================
 
 function sendJsonResponse($statusCode, $data)
@@ -391,6 +438,434 @@ function sendAuthError($error, $message)
             'error' => $error,
             'message' => $message
         ]
+    );
+}
+
+
+// =================================================
+// LIGHTWEIGHT LOGIN RATE LIMITING
+// =================================================
+// Uses REMOTE_ADDR only. Do not trust X-Forwarded-For unless a trusted
+// reverse proxy is explicitly configured to provide it.
+//
+// Lockout responses deliberately remain HTTP 401 so the current MediaHop
+// Unity login screen can display the server-provided message without any
+// client-side changes.
+
+function getLoginRateLimitClientKey()
+{
+    if (!isset($_SERVER['REMOTE_ADDR']))
+    {
+        return '';
+    }
+
+    return trim(
+        (string)$_SERVER['REMOTE_ADDR']
+    );
+}
+
+
+function getLoginRateLimitFile($clientKey)
+{
+    if ($clientKey === '')
+    {
+        return '';
+    }
+
+    $scriptScope =
+        substr(
+            hash(
+                'sha256',
+                __FILE__
+            ),
+            0,
+            16
+        );
+
+    $clientHash =
+        hash(
+            'sha256',
+            $clientKey
+        );
+
+    $tempDirectory =
+        rtrim(
+            sys_get_temp_dir(),
+            DIRECTORY_SEPARATOR
+        );
+
+    return
+        $tempDirectory .
+        DIRECTORY_SEPARATOR .
+        'mediahop_login_' .
+        $scriptScope .
+        '_' .
+        $clientHash .
+        '.json';
+}
+
+
+function readLoginRateLimitState($handle)
+{
+    $state = [
+        'failures' => [],
+        'lockedUntil' => 0
+    ];
+
+    if (!is_resource($handle))
+    {
+        return $state;
+    }
+
+    rewind($handle);
+
+    $raw =
+        stream_get_contents($handle);
+
+    if (!is_string($raw) ||
+        trim($raw) === '')
+    {
+        return $state;
+    }
+
+    $decoded =
+        json_decode(
+            $raw,
+            true
+        );
+
+    if (!is_array($decoded))
+    {
+        return $state;
+    }
+
+    if (isset($decoded['failures']) &&
+        is_array($decoded['failures']))
+    {
+        foreach ($decoded['failures'] as $failureTime)
+        {
+            if (is_numeric($failureTime))
+            {
+                $state['failures'][] =
+                    (int)$failureTime;
+            }
+        }
+    }
+
+    if (isset($decoded['lockedUntil']) &&
+        is_numeric($decoded['lockedUntil']))
+    {
+        $state['lockedUntil'] =
+            (int)$decoded['lockedUntil'];
+    }
+
+    return $state;
+}
+
+
+function writeLoginRateLimitState(
+    $handle,
+    $state)
+{
+    if (!is_resource($handle))
+    {
+        return;
+    }
+
+    rewind($handle);
+    ftruncate($handle, 0);
+
+    fwrite(
+        $handle,
+        json_encode(
+            $state,
+            JSON_UNESCAPED_SLASHES
+        )
+    );
+
+    fflush($handle);
+}
+
+
+function cleanLoginRateLimitFailures(
+    $failures,
+    $now,
+    $windowSeconds)
+{
+    $minimumTime =
+        $now -
+        max(
+            1,
+            (int)$windowSeconds
+        );
+
+    $cleaned = [];
+
+    foreach ($failures as $failureTime)
+    {
+        $failureTime =
+            (int)$failureTime;
+
+        if ($failureTime >= $minimumTime)
+        {
+            $cleaned[] =
+                $failureTime;
+        }
+    }
+
+    return $cleaned;
+}
+
+
+function getLoginRateLimitRetryAfter(
+    $clientKey,
+    $windowSeconds)
+{
+    $path =
+        getLoginRateLimitFile(
+            $clientKey
+        );
+
+    if ($path === '')
+    {
+        return 0;
+    }
+
+    $handle =
+        @fopen(
+            $path,
+            'c+'
+        );
+
+    if ($handle === false)
+    {
+        // Fail open if the host cannot write temp files.
+        return 0;
+    }
+
+    if (!@flock(
+            $handle,
+            LOCK_EX))
+    {
+        fclose($handle);
+        return 0;
+    }
+
+    $now = time();
+
+    $state =
+        readLoginRateLimitState(
+            $handle
+        );
+
+    if ($state['lockedUntil'] > $now)
+    {
+        $retryAfter =
+            $state['lockedUntil'] -
+            $now;
+
+        @flock($handle, LOCK_UN);
+        fclose($handle);
+
+        return max(
+            1,
+            $retryAfter
+        );
+    }
+
+    // A completed lockout starts with a clean slate.
+    if ($state['lockedUntil'] > 0)
+    {
+        $state['lockedUntil'] = 0;
+        $state['failures'] = [];
+    }
+    else
+    {
+        $state['failures'] =
+            cleanLoginRateLimitFailures(
+                $state['failures'],
+                $now,
+                $windowSeconds
+            );
+    }
+
+    writeLoginRateLimitState(
+        $handle,
+        $state
+    );
+
+    @flock($handle, LOCK_UN);
+    fclose($handle);
+
+    return 0;
+}
+
+
+function recordLoginRateLimitFailure(
+    $clientKey,
+    $maxFailures,
+    $windowSeconds,
+    $lockoutSeconds)
+{
+    $path =
+        getLoginRateLimitFile(
+            $clientKey
+        );
+
+    if ($path === '')
+    {
+        return 0;
+    }
+
+    $handle =
+        @fopen(
+            $path,
+            'c+'
+        );
+
+    if ($handle === false)
+    {
+        return 0;
+    }
+
+    if (!@flock(
+            $handle,
+            LOCK_EX))
+    {
+        fclose($handle);
+        return 0;
+    }
+
+    $now = time();
+
+    $state =
+        readLoginRateLimitState(
+            $handle
+        );
+
+    if ($state['lockedUntil'] > $now)
+    {
+        $retryAfter =
+            $state['lockedUntil'] -
+            $now;
+
+        @flock($handle, LOCK_UN);
+        fclose($handle);
+
+        return max(
+            1,
+            $retryAfter
+        );
+    }
+
+    if ($state['lockedUntil'] > 0)
+    {
+        $state['lockedUntil'] = 0;
+        $state['failures'] = [];
+    }
+
+    $state['failures'] =
+        cleanLoginRateLimitFailures(
+            $state['failures'],
+            $now,
+            $windowSeconds
+        );
+
+    $state['failures'][] =
+        $now;
+
+    if (count($state['failures']) >=
+        max(
+            1,
+            (int)$maxFailures
+        ))
+    {
+        $state['lockedUntil'] =
+            $now +
+            max(
+                1,
+                (int)$lockoutSeconds
+            );
+
+        // Start fresh after the lockout expires.
+        $state['failures'] = [];
+
+        $retryAfter =
+            $state['lockedUntil'] -
+            $now;
+
+        writeLoginRateLimitState(
+            $handle,
+            $state
+        );
+
+        @flock($handle, LOCK_UN);
+        fclose($handle);
+
+        return max(
+            1,
+            $retryAfter
+        );
+    }
+
+    writeLoginRateLimitState(
+        $handle,
+        $state
+    );
+
+    @flock($handle, LOCK_UN);
+    fclose($handle);
+
+    return 0;
+}
+
+
+function clearLoginRateLimitState(
+    $clientKey)
+{
+    $path =
+        getLoginRateLimitFile(
+            $clientKey
+        );
+
+    if ($path === '')
+    {
+        return;
+    }
+
+    @unlink($path);
+}
+
+
+function sendLoginRateLimitError(
+    $retryAfterSeconds)
+{
+    $retryAfterSeconds =
+        max(
+            1,
+            (int)$retryAfterSeconds
+        );
+
+    $retryMinutes =
+        max(
+            1,
+            (int)ceil(
+                $retryAfterSeconds / 60
+            )
+        );
+
+    header(
+        'Retry-After: ' .
+        $retryAfterSeconds
+    );
+
+    sendAuthError(
+        'rate_limited',
+        'Too many failed login attempts. Try again in about ' .
+        $retryMinutes .
+        ($retryMinutes === 1
+            ? ' minute.'
+            : ' minutes.')
     );
 }
 
@@ -438,6 +913,8 @@ function buildAuthSigningKey(
     $username,
     $password)
 {
+    // Username/password are deliberately part of the signing key.
+    // Changing either one invalidates all existing tokens immediately.
     return hash(
         'sha256',
         $secret . "\n" .
@@ -653,7 +1130,8 @@ function getRequestToken()
         return $token;
     }
 
-    // TVs and direct players often cannot attach custom HTTP headers.
+    // Direct video players / TVs often cannot attach custom HTTP headers.
+    // Protected media URLs therefore also support ?token=...
     if (isset($_GET['token']) &&
         is_string($_GET['token']) &&
         $_GET['token'] !== '')
@@ -686,6 +1164,7 @@ if ($authEnabled)
         );
     }
 }
+
 
 $authAction =
     isset($_GET['action'])
@@ -721,6 +1200,25 @@ if ($authAction === 'login')
                     'Login requires POST.'
             ]
         );
+    }
+
+    $rateLimitClientKey =
+        getLoginRateLimitClientKey();
+
+    if ($authRateLimitEnabled)
+    {
+        $retryAfter =
+            getLoginRateLimitRetryAfter(
+                $rateLimitClientKey,
+                $authRateLimitWindowSeconds
+            );
+
+        if ($retryAfter > 0)
+        {
+            sendLoginRateLimitError(
+                $retryAfter
+            );
+        }
     }
 
     $requestBody =
@@ -764,9 +1262,34 @@ if ($authAction === 'login')
     if (!$usernameMatches ||
         !$passwordMatches)
     {
+        if ($authRateLimitEnabled)
+        {
+            $retryAfter =
+                recordLoginRateLimitFailure(
+                    $rateLimitClientKey,
+                    $authRateLimitMaxFailures,
+                    $authRateLimitWindowSeconds,
+                    $authRateLimitLockoutSeconds
+                );
+
+            if ($retryAfter > 0)
+            {
+                sendLoginRateLimitError(
+                    $retryAfter
+                );
+            }
+        }
+
         sendAuthError(
             'invalid_credentials',
             'Incorrect username or password.'
+        );
+    }
+
+    if ($authRateLimitEnabled)
+    {
+        clearLoginRateLimitState(
+            $rateLimitClientKey
         );
     }
 
@@ -823,42 +1346,49 @@ if ($authEnabled)
 
 
 // =================================================
-// RESOLVE MEDIA ROOT
-// =================================================
-
-$basePath =
-    realpath(
-        $mediaDirectory
-    );
-
-if ($basePath === false ||
-    !is_dir($basePath))
-{
-    sendJsonResponse(
-        500,
-        [
-            'success' => false,
-            'error' => 'media_directory_missing',
-            'message' =>
-                'Media directory does not exist.',
-            'items' => []
-        ]
-    );
-}
-
-
-// =================================================
 // TV MEDIA INFO FOR DLNA METADATA
 // =================================================
 
 if (isset($_GET['info']))
 {
+    $basePath =
+        realpath(
+            $mediaDirectory
+        );
+
+    if ($basePath === false ||
+        !is_dir($basePath))
+    {
+        sendJsonResponse(
+            500,
+            [
+                'success' => false,
+                'message' =>
+                    'Media directory unavailable.'
+            ]
+        );
+    }
+
     $relativePath =
         normalizeRelativePath(
             rawurldecode(
                 $_GET['info']
             )
         );
+
+    if (isHiddenMediaPath(
+            $relativePath,
+            $excludedFolders))
+    {
+        sendJsonResponse(
+            404,
+            [
+                'success' => false,
+                'message' =>
+                    'Media file not found.'
+            ]
+        );
+    }
 
     $requestedPath =
         realpath(
@@ -880,6 +1410,7 @@ if (isset($_GET['info']))
         );
     }
 
+    // Keep the same traversal protection used by normal streaming.
     $basePrefix =
         rtrim(
             str_replace(
@@ -912,20 +1443,6 @@ if (isset($_GET['info']))
         );
     }
 
-    if (isExcludedMediaPath(
-            $relativePath,
-            $excludedFolders))
-    {
-        sendJsonResponse(
-            404,
-            [
-                'success' => false,
-                'message' =>
-                    'Media file not found.'
-            ]
-        );
-    }
-
     $metadata =
         getTvMediaMetadata(
             $requestedPath
@@ -949,24 +1466,40 @@ if (isset($_GET['info']))
 
 if (isset($_GET['file']))
 {
-    // Media streams can remain open for a long time.
+    // -------------------------------------------------
+    // LONG-RUNNING MEDIA STREAM SETTINGS
+    // -------------------------------------------------
+    // A TV stream can stay open for well over an hour. Do not let PHP's
+    // normal execution timer or PHP output buffering terminate/delay it.
     @set_time_limit(0);
     @ini_set('max_execution_time', '0');
     @ini_set('output_buffering', '0');
     @ini_set('zlib.output_compression', '0');
 
+    // Remove any output buffers that were already created before this point.
     while (ob_get_level() > 0)
     {
         @ob_end_clean();
     }
 
-    // nginx honours this; other servers safely ignore it.
+    // nginx honours this header by disabling FastCGI/proxy response buffering.
+    // Other web servers safely ignore it.
     header('X-Accel-Buffering: no');
     header('Cache-Control: no-store, no-transform');
 
+    // Also ask Apache, when available, not to gzip this already-compressed media.
     if (function_exists('apache_setenv'))
     {
         @apache_setenv('no-gzip', '1');
+    }
+
+    $basePath = realpath($mediaDirectory);
+
+    if ($basePath === false ||
+        !is_dir($basePath))
+    {
+        http_response_code(500);
+        exit('Media directory does not exist.');
     }
 
     $relativePath =
@@ -976,7 +1509,7 @@ if (isset($_GET['file']))
             )
         );
 
-    if (isExcludedMediaPath(
+    if (isHiddenMediaPath(
             $relativePath,
             $excludedFolders))
     {
@@ -1001,11 +1534,7 @@ if (isset($_GET['file']))
     // Stop ../ traversal outside the media root.
     $basePrefix =
         rtrim(
-            str_replace(
-                '\\',
-                '/',
-                $basePath
-            ),
+            str_replace('\\', '/', $basePath),
             '/'
         ) . '/';
 
@@ -1027,12 +1556,6 @@ if (isset($_GET['file']))
 
     $fileSize =
         filesize($requestedPath);
-
-    if ($fileSize === false)
-    {
-        http_response_code(500);
-        exit('Unable to read file size.');
-    }
 
     $start = 0;
     $end =
@@ -1153,6 +1676,95 @@ if (isset($_GET['file']))
     $chunkSize =
         1024 * 1024;
 
+    // -------------------------------------------------
+    // STREAM DIAGNOSTICS ONLY
+    // -------------------------------------------------
+    $streamStartedAt = microtime(true);
+    $streamBytesSent = 0;
+    $streamExitReason = 'unknown';
+    $streamDiagnosticActive = true;
+    $lastProgressLogAt = $streamStartedAt;
+
+    mediaHopStreamLog(
+        'STREAM START' .
+        ' | File: ' . basename($requestedPath) .
+        ' | Status: ' . $statusCode .
+        ' | Range: ' . $start . '-' . $end .
+        ' | Length: ' . $length .
+        ' | FileSize: ' . $fileSize .
+        ' | PHP max_execution_time: ' . ini_get('max_execution_time') .
+        ' | OutputBuffering: ' . ini_get('output_buffering') .
+        ' | ZlibCompression: ' . ini_get('zlib.output_compression') .
+        ' | OBLevel: ' . ob_get_level() .
+        ' | ConnectionStatus: ' . connection_status()
+    );
+
+    register_shutdown_function(
+        function () use (
+            &$streamDiagnosticActive,
+            &$streamExitReason,
+            &$streamBytesSent,
+            &$remaining,
+            &$streamStartedAt,
+            $requestedPath,
+            $length)
+        {
+            if (!$streamDiagnosticActive)
+            {
+                return;
+            }
+
+            $lastError = error_get_last();
+
+            $errorText = 'none';
+
+            if (is_array($lastError))
+            {
+                $errorText =
+                    'type=' .
+                    (isset($lastError['type'])
+                        ? $lastError['type']
+                        : 'unknown') .
+                    ', message=' .
+                    (isset($lastError['message'])
+                        ? str_replace(
+                            ["\r", "\n"],
+                            ' ',
+                            $lastError['message']
+                        )
+                        : 'unknown') .
+                    ', file=' .
+                    (isset($lastError['file'])
+                        ? basename($lastError['file'])
+                        : 'unknown') .
+                    ', line=' .
+                    (isset($lastError['line'])
+                        ? $lastError['line']
+                        : 'unknown');
+            }
+
+            mediaHopStreamLog(
+                'STREAM SHUTDOWN' .
+                ' | File: ' . basename($requestedPath) .
+                ' | Reason: ' . $streamExitReason .
+                ' | BytesSent: ' . $streamBytesSent .
+                ' | Expected: ' . $length .
+                ' | Remaining: ' . $remaining .
+                ' | Elapsed: ' .
+                    number_format(
+                        microtime(true) - $streamStartedAt,
+                        1,
+                        '.',
+                        ''
+                    ) . 's' .
+                ' | ConnectionStatus: ' . connection_status() .
+                ' | ConnectionAborted: ' .
+                    (connection_aborted() ? 'yes' : 'no') .
+                ' | LastError: ' . $errorText
+            );
+        }
+    );
+
     while ($remaining > 0 &&
            !feof($handle))
     {
@@ -1168,25 +1780,132 @@ if (isset($_GET['file']))
                 $readSize
             );
 
-        if ($buffer === false ||
-            $buffer === '')
+        if ($buffer === false)
         {
+            $streamExitReason = 'fread returned false';
+
+            mediaHopStreamLog(
+                'STREAM READ FAILED' .
+                ' | File: ' . basename($requestedPath) .
+                ' | BytesSent: ' . $streamBytesSent .
+                ' | Remaining: ' . $remaining .
+                ' | Feof: ' . (feof($handle) ? 'yes' : 'no') .
+                ' | ConnectionStatus: ' . connection_status()
+            );
+
             break;
         }
+
+        if ($buffer === '')
+        {
+            $streamExitReason = 'fread returned empty string';
+
+            mediaHopStreamLog(
+                'STREAM READ EMPTY' .
+                ' | File: ' . basename($requestedPath) .
+                ' | BytesSent: ' . $streamBytesSent .
+                ' | Remaining: ' . $remaining .
+                ' | Feof: ' . (feof($handle) ? 'yes' : 'no') .
+                ' | ConnectionStatus: ' . connection_status()
+            );
+
+            break;
+        }
+
+        $bytesThisChunk = strlen($buffer);
 
         echo $buffer;
         flush();
 
+        $streamBytesSent +=
+            $bytesThisChunk;
+
         $remaining -=
-            strlen($buffer);
+            $bytesThisChunk;
+
+        $now = microtime(true);
+
+        if (($now - $lastProgressLogAt) >= 60.0)
+        {
+            mediaHopStreamLog(
+                'STREAM PROGRESS' .
+                ' | File: ' . basename($requestedPath) .
+                ' | BytesSent: ' . $streamBytesSent .
+                ' | Remaining: ' . $remaining .
+                ' | Elapsed: ' .
+                    number_format(
+                        $now - $streamStartedAt,
+                        1,
+                        '.',
+                        ''
+                    ) . 's' .
+                ' | ConnectionStatus: ' . connection_status()
+            );
+
+            $lastProgressLogAt = $now;
+        }
 
         if (connection_aborted())
         {
+            $streamExitReason = 'connection_aborted';
+
+            mediaHopStreamLog(
+                'STREAM CLIENT ABORTED' .
+                ' | File: ' . basename($requestedPath) .
+                ' | BytesSent: ' . $streamBytesSent .
+                ' | Remaining: ' . $remaining .
+                ' | Elapsed: ' .
+                    number_format(
+                        microtime(true) - $streamStartedAt,
+                        1,
+                        '.',
+                        ''
+                    ) . 's' .
+                ' | ConnectionStatus: ' . connection_status()
+            );
+
             break;
         }
     }
 
+    if ($remaining <= 0)
+    {
+        $streamExitReason = 'completed normally';
+    }
+    elseif (feof($handle) &&
+            $streamExitReason === 'unknown')
+    {
+        $streamExitReason = 'local file reached EOF early';
+    }
+    elseif ($streamExitReason === 'unknown')
+    {
+        $streamExitReason = 'loop ended for unknown reason';
+    }
+
+    mediaHopStreamLog(
+        'STREAM END' .
+        ' | File: ' . basename($requestedPath) .
+        ' | Reason: ' . $streamExitReason .
+        ' | BytesSent: ' . $streamBytesSent .
+        ' | Expected: ' . $length .
+        ' | Remaining: ' . $remaining .
+        ' | Elapsed: ' .
+            number_format(
+                microtime(true) - $streamStartedAt,
+                1,
+                '.',
+                ''
+            ) . 's' .
+        ' | Feof: ' . (feof($handle) ? 'yes' : 'no') .
+        ' | ConnectionStatus: ' . connection_status() .
+        ' | ConnectionAborted: ' .
+            (connection_aborted() ? 'yes' : 'no')
+    );
+
     fclose($handle);
+
+    // Leave this true until PHP's shutdown phase so the shutdown
+    // diagnostic can report anything that happens after the normal loop.
     exit;
 }
 
@@ -1206,6 +1925,30 @@ header(
 $result = [
     'items' => []
 ];
+
+$basePath =
+    realpath(
+        $mediaDirectory
+    );
+
+if ($basePath === false ||
+    !is_dir($basePath))
+{
+    http_response_code(500);
+
+    echo json_encode(
+        [
+            'error' =>
+                'Media directory does not exist: ' .
+                $mediaDirectory,
+            'items' => []
+        ],
+        JSON_PRETTY_PRINT |
+        JSON_UNESCAPED_SLASHES
+    );
+
+    exit;
+}
 
 $selfUrl =
     buildSelfUrl();
@@ -1258,7 +2001,7 @@ foreach ($iterator as $file)
             '/'
         );
 
-    if (isExcludedMediaPath(
+    if (isHiddenMediaPath(
             $relativePath,
             $excludedFolders))
     {
@@ -1275,6 +2018,8 @@ foreach ($iterator as $file)
     if ($authEnabled &&
         $requestToken !== null)
     {
+        // Keep direct playback / TV hand-off simple by putting the
+        // already-validated token into the protected stream URL.
         $mediaUrl .=
             '&token=' .
             rawurlencode(
@@ -1286,7 +2031,7 @@ foreach ($iterator as $file)
         'name' =>
             $file->getFilename(),
 
-        // Relative path is used by MediaHop
+        // Relative path is used by the Unity app
         // to rebuild the real folder structure.
         'path' =>
             $relativePath,

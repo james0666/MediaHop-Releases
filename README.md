@@ -1,6 +1,6 @@
 # MediaHop
 
-**Last updated: 27 September 2026**
+**Last updated: 24 October 2026**
 
 MediaHop is a lightweight Android media app designed to make it easy to play media from a remote server or local M3U playlist on either your phone or a compatible TV.
 
@@ -14,11 +14,79 @@ MediaHop is intentionally lightweight. It does not require Plex, Jellyfin, Emby,
 
 ## Current Test Release
 
-**MediaHop 0.1.22**
+**MediaHop 0.1.23**
 
-MediaHop is currently available as a public test build through the **Releases** section of this repository.
+MediaHop 0.1.23 is the current recommended public test build and is available through the **Releases** section of this repository.
 
-This is still a test release. Compatibility can vary between Android devices, media formats, IPTV sources, networks, and DLNA / UPnP TVs.
+This release is focused heavily on playback stability, especially TV playlist playback while the Android phone is asleep.
+
+Testing of 0.1.23 has shown substantially improved playback reliability. The recurring cut-outs seen during 0.1.22 testing have not reproduced in the established 0.1.23 long-session tests.
+
+Compatibility can still vary between Android devices, media formats, IPTV sources, networks, and DLNA / UPnP TVs.
+
+---
+
+## What's Improved in 0.1.23
+
+### Screen-Off TV Playlist Playback
+
+TV playlists can now continue through multiple items while the Android phone remains asleep.
+
+The background playback path can:
+
+```text
+Current item finishes naturally
+-> confirm the TV really reached the end
+-> record Recently Watched once
+-> advance to the next playlist item
+-> start the next TV item
+-> continue while the phone remains asleep
+```
+
+The final playlist item can also finish while the phone is asleep.
+
+When that happens MediaHop can complete the playlist cleanup in the background, stop the relay/service normally, and reconcile the visible playlist, history, and playback UI when Unity wakes again.
+
+Background playlist transitions retain source-generation and session guards so stale work cannot double-advance the playlist or take control after a newer Stop, handoff, source change, or resume action.
+
+### TV Seek Accuracy
+
+TV seeking received additional timing cleanup.
+
+A real issue was found where the requested seek target could be correct in the UI but the TV would resume several seconds beyond it because playback kept advancing while the renderer processed the seek.
+
+For a seek issued while the TV is already playing, MediaHop can now use:
+
+```text
+Pause
+-> Seek
+-> Play
+```
+
+This prevents the renderer from continuing to accumulate playback time during the seek operation.
+
+If Pause is not supported by the current renderer/state, MediaHop falls back to the existing direct-seek path.
+
+A seek issued while the TV is already paused remains paused.
+
+Exact seek behaviour can still vary between TV brands and models.
+
+### Playback Stability
+
+0.1.23 has completed repeated real-world testing including:
+
+- Long TV playback sessions
+- Screen-off multi-episode playlist playback
+- Final-item completion while the phone remains asleep
+- Waking the phone during later playlist playback
+- Recently Watched reconciliation after background completion
+- Repeated TV seeking
+- Normal Server playback
+- M3U / IPTV playback
+- Phone ↔ TV handoff
+- Background streaming while using other phone apps
+
+The current 0.1.23 build is the playback baseline for ongoing public testing.
 
 ---
 
@@ -45,6 +113,8 @@ MediaHop currently supports:
 - Tap any playlist item to start playback from that point
 - Previous / Next controls
 - Automatic playlist progression
+- Screen-off TV playlist progression through multiple items
+- Background final-item cleanup
 - Recently Watched history for completed server media
 - Tap Recently Watched items to replay them
 - Main-screen TV playback controls
@@ -63,8 +133,8 @@ MediaHop currently supports:
 - Limited automatic M3U reconnect handling
 - Basic network-status display
 - Optional protected server authentication
-- HTTP Basic Authentication support
 - MediaHop login/token authentication
+- TV `Ready to play` idle screen
 - Stop all active playback
 - Share the latest diagnostic log directly from Settings
 
@@ -84,15 +154,17 @@ Local M3U -> Android Phone -> Media3
 Local M3U -> Android Phone Proxy -> Local Network -> DLNA TV
 ```
 
-Playback target selection is remembered during the current app session.
+Playback target selection is sticky across the main playback paths.
 
 General behaviour:
 
 ```text
 0 TVs found  -> Phone
 1 TV found   -> MediaHop can use it automatically
-2+ TVs found -> Choose the TV you want
+2+ TVs found -> Phone remains selected until you choose a TV
 ```
+
+The selected TV remains remembered through Stop and failed playback.
 
 Normal media files can move between Phone and TV while preserving playback position.
 
@@ -100,15 +172,28 @@ Live M3U streams do not use timestamp resume when switching targets.
 
 ---
 
-## Multiple TVs
+## TV Ready Screen
 
-MediaHop supports homes with more than one compatible DLNA / UPnP TV.
+When MediaHop has a selected TV but no real media source is active, it can show a simple idle screen on the TV:
 
-If one compatible TV is discovered, MediaHop can use it automatically.
+```text
+MediaHop logo
+Ready to play
+```
 
-If multiple TVs are discovered, they can be selected from the **Active Device** area.
+Current behaviour is intentionally narrow:
 
-This lets different people choose the TV they actually want instead of MediaHop simply using whichever device responds first.
+```text
+First TV connection   -> Ready to play screen
+Start real media      -> idle screen disappears
+Playlist transition   -> no idle screen inserted
+Phone / TV handoff    -> no idle screen inserted
+Automatic retry       -> no idle screen inserted
+Stop Everything       -> Ready to play screen returns
+Start another file    -> idle screen disappears
+```
+
+The idle screen uses a lightweight path and does not start the normal Android streaming foreground service just to keep the image visible.
 
 ---
 
@@ -161,7 +246,7 @@ MediaHop:
 Captures the current phone position
 -> closes phone playback
 -> starts TV playback
--> resumes near the captured position
+-> attempts to resume near the captured position
 ```
 
 ### TV → Phone
@@ -195,7 +280,14 @@ Playlist features include:
 - Phone and TV playback
 - Phone ↔ TV handoff
 - Playback-position preservation for normal files
-- Automatic cleanup after the final item finishes
+- Screen-off TV auto-advance through multiple items
+- Background-safe natural-end detection
+- Final-item cleanup while the phone remains asleep
+- Wake-time UI/history reconciliation
+
+A completed proxy transfer alone is not treated as proof that the TV finished watching the file.
+
+For TV playback MediaHop looks for real renderer end evidence before marking an item naturally completed.
 
 ---
 
@@ -209,6 +301,8 @@ MediaHop keeps a small rolling history of naturally completed server media.
 - Recently Watched items can be tapped to play them again
 - Older entries automatically roll off the list
 - TV completion detection can continue while the phone screen is off
+- Screen-off playlist completions are reconciled correctly when the app wakes
+- Completed items are protected against duplicate background recording
 
 ---
 
@@ -228,6 +322,10 @@ Seeking depends on TV compatibility.
 
 Rapid `-30` or `+30` presses can be combined into a larger seek before being sent to the TV.
 
+For supported playing states, 0.1.23 can use **Pause → Seek → Play** to reduce seek drift while the renderer processes the command.
+
+If Pause is unavailable, MediaHop falls back to direct seeking.
+
 ---
 
 ## Background TV Streaming
@@ -239,10 +337,13 @@ This allows TV playback to continue while:
 - MediaHop is minimised
 - Other phone apps are being used
 - The phone receives normal interruptions such as calls
+- The phone screen is off
 
 The streaming proxy still runs as part of the MediaHop app process.
 
 Force-closing or killing MediaHop will eventually stop the proxy and TV playback.
+
+Some Android manufacturers use aggressive battery-management features that can interfere with background networking. If a phone is configured to place MediaHop into a deep-sleep or similarly restricted mode, Android itself may stop the network connection.
 
 ---
 
@@ -280,7 +381,6 @@ The helper can:
 - Prevent path traversal outside the configured media directory
 - Optionally provide selected-file metadata through `ffprobe`
 - Support MediaHop authentication
-- Work alongside HTTP Basic Authentication
 
 Setup instructions and the current PHP file are available in:
 
@@ -292,25 +392,20 @@ MediaHop_Server/
 
 ## Authentication
 
-MediaHop supports two optional protection layers.
-
-### MediaHop Login
-
-MediaHop can use its own username/password login system with signed authentication tokens.
+MediaHop 0.1.23 supports its own optional username/password login system with signed authentication tokens.
 
 Current behaviour includes:
 
 - Remembered username
-- Passwords are not written to settings
+- Passwords are not written to the normal settings file
 - Tokens expire after 14 days
 - Re-authentication when a token expires or is rejected
 - Basic rate limiting against repeated failed login attempts
+- Protected server listing
+- Protected Phone playback
+- Protected TV playback through the phone proxy
+- Authentication through normal Phone ↔ TV handoff
 
-### HTTP Basic Authentication
-
-MediaHop also supports servers protected by standard HTTP Basic Authentication.
-
-The two systems can be used independently or together.
 
 ---
 
@@ -389,32 +484,67 @@ Current logging avoids writing tested:
 - Passwords
 - Authorization headers
 - Bearer credentials
-- Basic Authentication credentials
 - MediaHop authentication tokens
 
 Local network addresses and TV control information may still appear in diagnostic logs because they are useful when troubleshooting local playback.
 
 ---
 
-## Current Status
+## Testing Status
 
-MediaHop is still under active testing.
+MediaHop 0.1.23 is the current recommended public test build and the playback baseline for ongoing testing.
 
-Current testing is focused mainly on:
+Current testing has covered:
 
 - Longer real-world playback sessions
-- M3U stability and recovery
-- Phone and TV playback
+- Server playback to Phone and TV
+- M3U playback to Phone and TV
 - Phone ↔ TV handoff
-- Screen-off playback completion
+- Screen-off TV playlist progression
+- Final-item completion while the phone remains asleep
+- Wake-time playlist/history/UI reconciliation
+- Recently Watched natural completion
 - TV seeking
 - Background streaming
-- Different Android devices
-- Different networks
-- Different DLNA / UPnP TVs
+- Different Android connection states
+- Multiple TV models
+- Multiple DLNA / UPnP implementations
+
+Repeated long screen-off TV runs, including multi-episode playlist sessions, have completed without the recurring cut-outs seen during 0.1.22 testing.
 
 The project is deliberately staying small and focused.
 
 MediaHop is intended to remain a lightweight way to:
 
 **find media, choose a device, play it, switch if needed, and stop cleanly.**
+
+---
+
+## Reporting Problems
+
+If something does not work as expected, please report it through the **Issues** section of this repository or send the diagnostic log if you are testing directly with the developer.
+
+Useful information includes:
+
+- Phone model
+- Android version
+- TV brand and model if relevant
+- What you were trying to play
+- Whether playback was on Phone or TV
+- What happened
+- What you expected to happen
+- Whether the problem happens every time
+
+Screenshots are also useful when relevant.
+
+The **Send Diagnostic Log** button in Settings can attach the current MediaHop diagnostic log directly through the Android share menu.
+
+---
+
+## Installation
+
+Download the **MediaHop 0.1.23 APK** attached to the current release.
+
+Android may warn that the app is being installed from an external source because MediaHop is not currently distributed through the Google Play Store.
+
+Only install builds downloaded directly from the official MediaHop repository.
